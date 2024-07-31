@@ -123,8 +123,9 @@ function handleGradientChoice(gradientMsg) {
         bot.sendMessage(
             gradientMsg.chat.id,
             `Пожалуйста, введите текст для изображения. Переносы строк сохраняются. Между двумя абзацами необходимо оставить одну пустую строку.`
-        )
-        bot.sendMessage(gradientMsg.chat.id, TEXT_EXAMPLE_WITHOUT_GRADIENT)
+        ).then(() => {
+            bot.sendMessage(gradientMsg.chat.id, TEXT_EXAMPLE_WITHOUT_GRADIENT)
+        })
 
         bot.once("message", ({ chat, text }) =>
             generateImageWithoutGradient(chat.id, text)
