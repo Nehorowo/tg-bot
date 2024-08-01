@@ -90,16 +90,12 @@ registerFont(FONT_LIGHTITALIC_PATH, { family: "GothamProLightItalic" })
 function startImageGeneration(chatId) {
     const opts = {
         reply_markup: JSON.stringify({
-            keyboard: [[{ text: "С градиентом" }], [{ text: "Без градиента" }]],
+            keyboard: [[{ text: "Основная" }], [{ text: "Титульная" }]],
             one_time_keyboard: true,
             resize_keyboard: true,
         }),
     }
-    bot.sendMessage(
-        chatId,
-        "Хотите ли вы сгенерировать изображение с градиентом или без?",
-        opts
-    ).then(() => {
+    bot.sendMessage(chatId, "Какую карточку хотите сделать?", opts).then(() => {
         bot.once("message", handleGradientChoice)
     })
 }
@@ -111,7 +107,7 @@ bot.onText(/\/start/, (msg) => {
 
 // Функция обработки выбора градиента
 function handleGradientChoice(gradientMsg) {
-    const useGradient = gradientMsg.text === "С градиентом"
+    const useGradient = gradientMsg.text === "Основная"
     if (useGradient) {
         bot.sendMessage(
             gradientMsg.chat.id,
