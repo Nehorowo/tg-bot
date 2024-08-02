@@ -1,12 +1,15 @@
-require("dotenv").config()
-const token = process.env.TOKEN
-const TelegramBot = require("node-telegram-bot-api")
-const { createCanvas, loadImage, registerFont } = require("canvas")
-const express = require("express")
-const fs = require("fs")
-const path = require("path")
+import { Telegraf, Scenes, session } from "telegraf"
+const { BaseScene, Stage } = Scenes
+import { createCanvas, loadImage, registerFont } from "canvas"
+import express from "express"
+import fs from "fs"
+import { fileURLToPath } from "url"
+import { dirname, join } from "path"
+import "dotenv/config"
 
-const bot = new TelegramBot(token, { polling: true })
+// Вставьте сюда токен вашего бота
+const token = process.env.TOKEN
+const bot = new Telegraf(token)
 const app = express()
 const PORT = process.env.PORT || 3000
 
@@ -35,7 +38,6 @@ const TEXT_TEMPLATE_EXAMPLE = `
 
 const TEXT_SOURCE_EXAMPLE =
     'Укажите текст источника. Например, "Фото: Первый Канал".'
-
 const TEXT_EXAMPLE_WITHOUT_GRADIENT = `
 Пример:
 Пещера дракона,
@@ -46,13 +48,16 @@ const TEXT_EXAMPLE_WITHOUT_GRADIENT = `
 сходить
 в Петербурге?`
 
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
+
 // Папка для сохранения изображений
-const IMAGE_SAVE_PATH = path.join(__dirname, "images")
-const ASSETS_PATH = path.join(__dirname, "assets")
-const FONT_BLACK_PATH = path.join(__dirname, "fonts", "gothampro_black.ttf")
-const FONT_BOLD_PATH = path.join(__dirname, "fonts", "gothampro_bold.ttf")
-const FONT_LIGHT_PATH = path.join(__dirname, "fonts", "gothampro_light.ttf")
-const FONT_LIGHTITALIC_PATH = path.join(
+const IMAGE_SAVE_PATH = join(__dirname, "images")
+const ASSETS_PATH = join(__dirname, "assets")
+const FONT_BLACK_PATH = join(__dirname, "fonts", "gothampro_black.ttf")
+const FONT_BOLD_PATH = join(__dirname, "fonts", "gothampro_bold.ttf")
+const FONT_LIGHT_PATH = join(__dirname, "fonts", "gothampro_light.ttf")
+const FONT_LIGHTITALIC_PATH = join(
     __dirname,
     "fonts",
     "gothampro_lightitalic.ttf"
@@ -64,20 +69,13 @@ if (!fs.existsSync(IMAGE_SAVE_PATH)) {
 }
 
 // Проверка существования файлов шрифтов
-if (!fs.existsSync(FONT_BLACK_PATH)) {
-    console.error("Font file gothampro_black.ttf not found.")
-    process.exit(1)
-}
-if (!fs.existsSync(FONT_BOLD_PATH)) {
-    console.error("Font file gothampro_bold.ttf not found.")
-    process.exit(1)
-}
-if (!fs.existsSync(FONT_LIGHT_PATH)) {
-    console.error("Font file gothampro_light.ttf not found.")
-    process.exit(1)
-}
-if (!fs.existsSync(FONT_LIGHTITALIC_PATH)) {
-    console.error("Font file gothampro_lightitalic.ttf not found.")
+if (
+    !fs.existsSync(FONT_BLACK_PATH) ||
+    !fs.existsSync(FONT_BOLD_PATH) ||
+    !fs.existsSync(FONT_LIGHT_PATH) ||
+    !fs.existsSync(FONT_LIGHTITALIC_PATH)
+) {
+    console.error("One or more font files not found.")
     process.exit(1)
 }
 
@@ -87,92 +85,102 @@ registerFont(FONT_BOLD_PATH, { family: "GothamProBold" })
 registerFont(FONT_LIGHT_PATH, { family: "GothamProLight" })
 registerFont(FONT_LIGHTITALIC_PATH, { family: "GothamProLightItalic" })
 
-function startImageGeneration(chatId) {
-    const opts = {
-        reply_markup: JSON.stringify({
+// Сцена выбора типа карточки
+const chooseCardTypeScene = new BaseScene("chooseCardTypeScene")
+chooseCardTypeScene.enter((ctx) =>
+    ctx.reply("Какую карточку хотите сделать?", {
+        reply_markup: {
             keyboard: [[{ text: "Основная" }], [{ text: "Титульная" }]],
             one_time_keyboard: true,
             resize_keyboard: true,
-        }),
-    }
-    bot.sendMessage(chatId, "Какую карточку хотите сделать?", opts).then(() => {
-        bot.once("message", handleGradientChoice)
+        },
     })
-}
-
-// Команда старт
-bot.onText(/\/start/, (msg) => {
-    startImageGeneration(msg.chat.id)
-})
-
-// Функция обработки выбора градиента
-function handleGradientChoice(gradientMsg) {
-    const useGradient = gradientMsg.text === "Основная"
-    if (useGradient) {
-        bot.sendMessage(
-            gradientMsg.chat.id,
+)
+chooseCardTypeScene.on("text", (ctx) => {
+    const choice = ctx.message.text
+    if (choice === "Основная") {
+        ctx.session.useGradient = true
+        ctx.reply(
             "Отлично! Отправьте мне изображение для верхней части карточки."
         )
-
-        bot.once("photo", (msg) => handleImage(msg))
-    } else {
-        bot.sendMessage(
-            gradientMsg.chat.id,
-            `Пожалуйста, введите текст для изображения. Переносы строк сохраняются. Между двумя абзацами необходимо оставить одну пустую строку.`
-        ).then(() => {
-            bot.sendMessage(gradientMsg.chat.id, TEXT_EXAMPLE_WITHOUT_GRADIENT)
-        })
-
-        bot.once("message", ({ chat, text }) =>
-            generateImageWithoutGradient(chat.id, text)
+        ctx.scene.enter("handleImageScene")
+    } else if (choice === "Титульная") {
+        ctx.session.useGradient = false
+        ctx.reply(
+            `Пожалуйста, введите текст для изображения. Переносы строк сохраняются. Между двумя абзацами необходимо оставить одну пустую строку.\n${TEXT_EXAMPLE_WITHOUT_GRADIENT}`
         )
+        ctx.scene.enter("textWithoutGradientScene")
+    } else {
+        ctx.reply("Пожалуйста, выберите один из предложенных вариантов.")
     }
-}
+})
 
-// Функция обработки изображения
-async function handleImage(msg) {
-    const photoId = msg.photo[msg.photo.length - 1].file_id
-    const file = await bot.getFile(photoId)
-    const filePath = `https://api.telegram.org/file/bot${token}/${file.file_path}`
+// Сцена обработки изображения
+const handleImageScene = new BaseScene("handleImageScene")
+handleImageScene.on("photo", async (ctx) => {
+    const photo = ctx.message.photo.pop()
+    const file = await ctx.telegram.getFile(photo.file_id)
+    ctx.session.filePath = `https://api.telegram.org/file/bot${token}/${file.file_path}`
+    ctx.reply(`${TEXT_TEMPLATE}\n${TEXT_TEMPLATE_EXAMPLE}`)
+    await ctx.scene.enter("handleTextScene")
+})
 
-    bot.sendMessage(msg.chat.id, `${TEXT_TEMPLATE}\n${TEXT_TEMPLATE_EXAMPLE}`)
+// Сцена обработки текста
+const handleTextScene = new BaseScene("handleTextScene")
+handleTextScene.on("text", (ctx) => {
+    ctx.session.text = ctx.message.text
+    ctx.reply(TEXT_SOURCE_EXAMPLE)
+    ctx.scene.enter("handleSourceScene")
+})
 
-    bot.once("message", (textMsg) => handleText(textMsg, filePath))
-}
+// Сцена обработки источника
+const handleSourceScene = new BaseScene("handleSourceScene")
+handleSourceScene.on("text", async (ctx) => {
+    ctx.session.source = ctx.message.text
+    await generateImage(ctx)
+    ctx.scene.leave()
+    askForAnotherGeneration(ctx)
+})
 
-// Функция обработки текста
-function handleText(textMsg, filePath) {
-    const text = textMsg.text
+// Сцена обработки текста без градиента
+const textWithoutGradientScene = new BaseScene("textWithoutGradientScene")
+textWithoutGradientScene.on("text", async (ctx) => {
+    await generateImageWithoutGradient(ctx, ctx.message.text)
+    ctx.scene.leave()
+    askForAnotherGeneration(ctx)
+})
 
-    bot.sendMessage(textMsg.chat.id, TEXT_SOURCE_EXAMPLE)
+// Создаем stage и регистрируем сцены
+const stage = new Stage([
+    chooseCardTypeScene,
+    handleImageScene,
+    handleTextScene,
+    handleSourceScene,
+    textWithoutGradientScene,
+])
+bot.use(session())
+bot.use(stage.middleware())
 
-    bot.once("message", (sourceMsg) => handleSource(sourceMsg, filePath, text))
-}
+// Команда старт
+bot.start((ctx) => ctx.scene.enter("chooseCardTypeScene"))
 
 // Функция, которая спрашивает пользователя, хочет ли он сгенерировать еще одно изображение
-function askForAnotherGeneration(chatId) {
-    const opts = {
-        reply_markup: JSON.stringify({
+function askForAnotherGeneration(ctx) {
+    ctx.reply("Хотите сгенерировать еще одно изображение?", {
+        reply_markup: {
             keyboard: [[{ text: "Да" }], [{ text: "Нет" }]],
             one_time_keyboard: true,
             resize_keyboard: true,
-        }),
-    }
-    bot.sendMessage(
-        chatId,
-        "Хотите сгенерировать еще одно изображение?",
-        opts
-    ).then(() => {
-        bot.once("message", (msg) => {
-            if (msg.text === "Да") {
-                startImageGeneration(chatId)
-            } else {
-                bot.sendMessage(
-                    chatId,
-                    "Спасибо за использование бота! Если захотите создать новое изображение, просто отправьте команду /start."
-                )
-            }
-        })
+        },
+    })
+    bot.on("text", (msg) => {
+        if (msg.message.text === "Да") {
+            ctx.scene.enter("chooseCardTypeScene")
+        } else {
+            ctx.reply(
+                "Спасибо за использование бота! Если захотите создать новое изображение, просто отправьте команду /start."
+            )
+        }
     })
 }
 
@@ -199,24 +207,22 @@ function drawStyledText(ctx, text, font, x, y, maxWidth, lineHeight) {
 }
 
 // Функция обработки источника и генерации изображения
-async function handleSource(sourceMsg, filePath, text) {
-    const source = sourceMsg.text
+async function generateImage(ctx) {
+    const { filePath, text, source } = ctx.session
 
     try {
         const userImage = await loadImage(filePath)
-        const background = await loadImage(
-            path.join(ASSETS_PATH, "background.png")
-        )
-        const gradient = await loadImage(path.join(ASSETS_PATH, "gradient.png"))
-        const logo = await loadImage(path.join(ASSETS_PATH, "logo.png"))
+        const background = await loadImage(join(ASSETS_PATH, "background.png"))
+        const gradient = await loadImage(join(ASSETS_PATH, "gradient.png"))
+        const logo = await loadImage(join(ASSETS_PATH, "logo.png"))
 
         const width = background.width
         const height = background.height
         const canvas = createCanvas(width, height)
-        const ctx = canvas.getContext("2d")
+        const canvasCtx = canvas.getContext("2d")
 
         // Рисуем фоновое изображение
-        ctx.drawImage(background, 0, 0, width, height)
+        canvasCtx.drawImage(background, 0, 0, width, height)
 
         // Определяем размеры и позицию для изображения пользователя, сохраняя пропорции
         const userImageAspectRatio = userImage.width / userImage.height
@@ -236,7 +242,7 @@ async function handleSource(sourceMsg, filePath, text) {
         }
 
         // Рисуем изображение пользователя в верхней части, обрезая его, если необходимо
-        ctx.drawImage(
+        canvasCtx.drawImage(
             userImage,
             sx,
             sy,
@@ -253,11 +259,11 @@ async function handleSource(sourceMsg, filePath, text) {
         const logoHeight = 90
         const logoX = width - logoWidth - 35
         const logoY = 35
-        ctx.drawImage(logo, logoX, logoY, logoWidth, logoHeight)
+        canvasCtx.drawImage(logo, logoX, logoY, logoWidth, logoHeight)
 
         // Рисуем градиент в нижней части
         if (gradient) {
-            ctx.drawImage(
+            canvasCtx.drawImage(
                 gradient,
                 0,
                 height - gradient.height,
@@ -267,9 +273,9 @@ async function handleSource(sourceMsg, filePath, text) {
         }
 
         // Настройки текста
-        ctx.fillStyle = "#FFFFFF"
-        ctx.textAlign = "left"
-        ctx.textBaseline = "top"
+        canvasCtx.fillStyle = "#FFFFFF"
+        canvasCtx.textAlign = "left"
+        canvasCtx.textBaseline = "top"
 
         const textStartY = 480 // Начальная позиция текста
         let textX = 65
@@ -286,7 +292,7 @@ async function handleSource(sourceMsg, filePath, text) {
             for (let part of parts) {
                 if (part.startsWith("%%%") && part.endsWith("%%%")) {
                     y = drawStyledText(
-                        ctx,
+                        canvasCtx,
                         part.slice(3, -3).toUpperCase(),
                         '47px "GothamProBlack"',
                         textX,
@@ -296,7 +302,7 @@ async function handleSource(sourceMsg, filePath, text) {
                     )
                 } else if (part.startsWith("%%") && part.endsWith("%%")) {
                     y = drawStyledText(
-                        ctx,
+                        canvasCtx,
                         part.slice(2, -2),
                         '25px "GothamProBold"',
                         textX,
@@ -306,7 +312,7 @@ async function handleSource(sourceMsg, filePath, text) {
                     )
                 } else if (part.startsWith("%") && part.endsWith("%")) {
                     y = drawStyledText(
-                        ctx,
+                        canvasCtx,
                         part.slice(1, -1),
                         '25px "GothamProLightItalic"',
                         textX,
@@ -316,7 +322,7 @@ async function handleSource(sourceMsg, filePath, text) {
                     )
                 } else {
                     y = drawStyledText(
-                        ctx,
+                        canvasCtx,
                         part,
                         '25px "GothamProLight"',
                         textX,
@@ -326,7 +332,9 @@ async function handleSource(sourceMsg, filePath, text) {
                     )
                 }
                 y -= lineHeight // Чтобы все части строки были на одной линии
-                textX += ctx.measureText(part.replace(/%%%|%%|%/g, "")).width
+                textX += canvasCtx.measureText(
+                    part.replace(/%%%|%%|%/g, "")
+                ).width
             }
 
             y += lineHeight // Переход на новую строку
@@ -334,51 +342,43 @@ async function handleSource(sourceMsg, filePath, text) {
         }
 
         // Наложение источника
-        ctx.font = '12.5px "GothamProLightItalic"'
-        ctx.globalAlpha = 0.2
-        ctx.fillText(source, 65, height - 50, width - 130)
-        ctx.globalAlpha = 1.0
+        canvasCtx.font = '12.5px "GothamProLightItalic"'
+        canvasCtx.globalAlpha = 0.2
+        canvasCtx.fillText(source, 65, height - 50, width - 130)
+        canvasCtx.globalAlpha = 1.0
 
         // Сохранение изображения
         const buffer = canvas.toBuffer("image/png")
         const imageName = `image_${Date.now()}.png`
-        const imagePath = path.join(IMAGE_SAVE_PATH, imageName)
+        const imagePath = join(IMAGE_SAVE_PATH, imageName)
         fs.writeFileSync(imagePath, buffer)
 
-        bot.sendMessage(
-            sourceMsg.chat.id,
-            "Картинка успешно сохранена на сервере."
-        )
-        bot.sendPhoto(sourceMsg.chat.id, imagePath).then(() => {
-            askForAnotherGeneration(sourceMsg.chat.id)
-        })
+        ctx.reply("Картинка успешно сохранена на сервере.")
+        await ctx.replyWithPhoto({ source: imagePath })
     } catch (error) {
         console.error(error)
-        bot.sendMessage(
-            sourceMsg.chat.id,
-            "Произошла ошибка при обработке изображения."
-        )
-        askForAnotherGeneration(sourceMsg.chat.id)
+        ctx.reply("Произошла ошибка при обработке изображения.")
     }
 }
 
-async function generateImageWithoutGradient(chatId, text) {
+// Функция генерации изображения без градиента
+async function generateImageWithoutGradient(ctx, text) {
     try {
-        const background = await loadImage(path.join(ASSETS_PATH, "bgFull.png"))
+        const background = await loadImage(join(ASSETS_PATH, "bgFull.png"))
 
         const width = background.width
         const height = background.height
         const canvas = createCanvas(width, height)
-        const ctx = canvas.getContext("2d")
+        const canvasCtx = canvas.getContext("2d")
 
         // Рисуем фон
-        ctx.drawImage(background, 0, 0, width, height)
+        canvasCtx.drawImage(background, 0, 0, width, height)
 
         // Выравнивание текста
-        ctx.textAlign = "center"
-        ctx.textBaseline = "middle"
-        ctx.font = '48px "GothamProBlack"'
-        ctx.fillStyle = "#FFFFFF"
+        canvasCtx.textAlign = "center"
+        canvasCtx.textBaseline = "middle"
+        canvasCtx.font = '48px "GothamProBlack"'
+        canvasCtx.fillStyle = "#FFFFFF"
 
         const textStartY = 480 // Начальная позиция текста
         let textX = width / 2
@@ -393,10 +393,10 @@ async function generateImageWithoutGradient(chatId, text) {
 
         lines.forEach((line, index) => {
             if (emptyIndex && index > emptyIndex) {
-                ctx.fillStyle = "#FFA82B"
+                canvasCtx.fillStyle = "#FFA82B"
             }
             y = drawStyledText(
-                ctx,
+                canvasCtx,
                 line.toUpperCase(),
                 '47px "GothamProBlack"',
                 textX,
@@ -410,17 +410,14 @@ async function generateImageWithoutGradient(chatId, text) {
         // Сохраняем изображение
         const buffer = canvas.toBuffer("image/png")
         const imageName = `image_${Date.now()}.png`
-        const imagePath = path.join(IMAGE_SAVE_PATH, imageName)
+        const imagePath = join(IMAGE_SAVE_PATH, imageName)
         fs.writeFileSync(imagePath, buffer)
 
-        bot.sendMessage(chatId, "Картинка успешно сохранена на сервере.")
-        bot.sendPhoto(chatId, imagePath).then(() => {
-            askForAnotherGeneration(chatId)
-        })
+        ctx.reply("Картинка успешно сохранена на сервере.")
+        await ctx.replyWithPhoto({ source: imagePath })
     } catch (error) {
         console.error(error)
-        bot.sendMessage(chatId, "Произошла ошибка при обработке изображения.")
-        askForAnotherGeneration(chatId)
+        ctx.reply("Произошла ошибка при обработке изображения.")
     }
 }
 
@@ -430,3 +427,5 @@ app.use("/images", express.static(IMAGE_SAVE_PATH))
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`)
 })
+
+bot.launch()

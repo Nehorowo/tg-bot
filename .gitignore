@@ -1,6 +1,8 @@
 # Created by https://www.toptal.com/developers/gitignore/api/webstorm,node,dotenv
 # Edit at https://www.toptal.com/developers/gitignore?templates=webstorm,node,dotenv
 
+images/*
+
 ### dotenv ###
 .env
 
