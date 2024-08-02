@@ -14,39 +14,43 @@ const app = express()
 const PORT = process.env.PORT || 3000
 
 const TEXT_TEMPLATE = `
-Напишите шаблон текста.
+Напишите шаблон текста\\.
 
-Заголовок необходимо обернуть в %%%.
-Жирный текст необходимо обернуть в %%.
-Курсив необходимо обернуть в %.
-Описание не оборачивается.
+Заголовок необходимо обернуть в %%%\\.
+Жирный текст необходимо обернуть в %%\\.
+Курсив необходимо обернуть в %\\.
+Описание не оборачивается\\.
 
-Пустые строки между абзацами текста сохраняются и будут на итоговом изображении.
+Пустые строки между абзацами текста сохраняются и будут на итоговом изображении\\.
 `
 
 const TEXT_TEMPLATE_EXAMPLE = `
 Пример:
+\`\`\`txt
 %%%Заголовок%%%
 
 %%99 февраля в 8:00%% %(Супер классное место)%
 %%От 999р%%
 
-А это супер классный пример текста описания, который можно скопировать и отправить боту! А вот ещё одно предложение.
+А это супер классный пример текста описания, который можно скопировать и отправить боту! А вот ещё одно предложение\\.
 
-А вот этот абзац текста будет с отступом сверху, потому что между двумя строками есть пустая строка.
-`
+А вот этот абзац текста будет с отступом сверху, потому что между двумя строками есть пустая строка\\.
+\`\`\``
 
-const TEXT_SOURCE_EXAMPLE =
-    'Укажите текст источника. Например, "Фото: Первый Канал".'
+const TEXT_SOURCE_EXAMPLE = `Укажите текст источника\\. Например, 
+\`Фото: Первый Канал\``
+
 const TEXT_EXAMPLE_WITHOUT_GRADIENT = `
 Пример:
+\`\`\`txt
 Пещера дракона,
 Лабиринты Федры,
 Таверна "Киша"
 
 Куда можно
 сходить
-в Петербурге?`
+в Петербурге?
+\`\`\``
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -106,8 +110,8 @@ chooseCardTypeScene.on("text", (ctx) => {
         ctx.scene.enter("handleImageScene")
     } else if (choice === "Титульная") {
         ctx.session.useGradient = false
-        ctx.reply(
-            `Пожалуйста, введите текст для изображения. Переносы строк сохраняются. Между двумя абзацами необходимо оставить одну пустую строку.\n${TEXT_EXAMPLE_WITHOUT_GRADIENT}`
+        ctx.replyWithMarkdownV2(
+            `Пожалуйста, введите текст для изображения\\. Переносы строк сохраняются\\. Между двумя абзацами необходимо оставить одну пустую строку\\.\n${TEXT_EXAMPLE_WITHOUT_GRADIENT}`
         )
         ctx.scene.enter("textWithoutGradientScene")
     } else {
@@ -121,7 +125,7 @@ handleImageScene.on("photo", async (ctx) => {
     const photo = ctx.message.photo.pop()
     const file = await ctx.telegram.getFile(photo.file_id)
     ctx.session.filePath = `https://api.telegram.org/file/bot${token}/${file.file_path}`
-    ctx.reply(`${TEXT_TEMPLATE}\n${TEXT_TEMPLATE_EXAMPLE}`)
+    ctx.replyWithMarkdownV2(`${TEXT_TEMPLATE}\n${TEXT_TEMPLATE_EXAMPLE}`)
     await ctx.scene.enter("handleTextScene")
 })
 
@@ -129,7 +133,7 @@ handleImageScene.on("photo", async (ctx) => {
 const handleTextScene = new BaseScene("handleTextScene")
 handleTextScene.on("text", (ctx) => {
     ctx.session.text = ctx.message.text
-    ctx.reply(TEXT_SOURCE_EXAMPLE)
+    ctx.replyWithMarkdownV2(TEXT_SOURCE_EXAMPLE)
     ctx.scene.enter("handleSourceScene")
 })
 
@@ -139,7 +143,7 @@ handleSourceScene.on("text", async (ctx) => {
     ctx.session.source = ctx.message.text
     await generateImage(ctx)
     ctx.scene.leave()
-    askForAnotherGeneration(ctx)
+    ctx.scene.enter("askForAnotherGenerationScene")
 })
 
 // Сцена обработки текста без градиента
@@ -147,7 +151,31 @@ const textWithoutGradientScene = new BaseScene("textWithoutGradientScene")
 textWithoutGradientScene.on("text", async (ctx) => {
     await generateImageWithoutGradient(ctx, ctx.message.text)
     ctx.scene.leave()
-    askForAnotherGeneration(ctx)
+    ctx.scene.enter("askForAnotherGenerationScene")
+})
+
+// Сцена для вопроса о генерации еще одного изображения
+const askForAnotherGenerationScene = new BaseScene(
+    "askForAnotherGenerationScene"
+)
+askForAnotherGenerationScene.enter((ctx) => {
+    ctx.reply("Хотите сгенерировать еще одно изображение?", {
+        reply_markup: {
+            keyboard: [[{ text: "Да" }], [{ text: "Нет" }]],
+            one_time_keyboard: true,
+            resize_keyboard: true,
+        },
+    })
+})
+askForAnotherGenerationScene.on("text", (ctx) => {
+    if (ctx.message.text === "Да") {
+        ctx.scene.enter("chooseCardTypeScene")
+    } else {
+        ctx.reply(
+            "Спасибо за использование бота! Если захотите создать новое изображение, просто отправьте команду /start."
+        )
+        ctx.scene.leave()
+    }
 })
 
 // Создаем stage и регистрируем сцены
@@ -157,32 +185,13 @@ const stage = new Stage([
     handleTextScene,
     handleSourceScene,
     textWithoutGradientScene,
+    askForAnotherGenerationScene,
 ])
 bot.use(session())
 bot.use(stage.middleware())
 
 // Команда старт
 bot.start((ctx) => ctx.scene.enter("chooseCardTypeScene"))
-
-// Функция, которая спрашивает пользователя, хочет ли он сгенерировать еще одно изображение
-function askForAnotherGeneration(ctx) {
-    ctx.reply("Хотите сгенерировать еще одно изображение?", {
-        reply_markup: {
-            keyboard: [[{ text: "Да" }], [{ text: "Нет" }]],
-            one_time_keyboard: true,
-            resize_keyboard: true,
-        },
-    })
-    bot.on("text", (msg) => {
-        if (msg.message.text === "Да") {
-            ctx.scene.enter("chooseCardTypeScene")
-        } else {
-            ctx.reply(
-                "Спасибо за использование бота! Если захотите создать новое изображение, просто отправьте команду /start."
-            )
-        }
-    })
-}
 
 // Функция для рисования текста с различными стилями
 function drawStyledText(ctx, text, font, x, y, maxWidth, lineHeight) {
